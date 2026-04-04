@@ -17,102 +17,66 @@ TRACK_MAP = {
 }
 
 TEAM_COLORS = {
-    0: (39, 244, 210),   # Mercedes
-    1: (232, 0, 32),     # Ferrari
-    2: (54, 113, 198),   # Red Bull
-    3: (100, 196, 255),  # Williams
-    4: (34, 153, 113),   # Aston Martin
-    5: (0, 147, 204),    # Alpine
-    6: (102, 146, 255),  # RB
-    7: (182, 186, 189),  # Haas
-    8: (255, 128, 0),    # McLaren
-    9: (82, 226, 82),    # Sauber
-    41: (150, 150, 150), # Generic
-    104: (255, 255, 255),# Custom
+    0: (39, 244, 210), 1: (232, 0, 32), 2: (54, 113, 198), 3: (100, 196, 255),
+    4: (34, 153, 113), 5: (0, 147, 204), 6: (102, 146, 255), 7: (182, 186, 189),
+    8: (255, 128, 0), 9: (82, 226, 82), 41: (150, 150, 150), 104: (255, 255, 255)
 }
 
 SESSION_RACE = [15, 16, 17]
 SESSION_TIME_TRIAL = [18]
 
 class TelemetryData:
-    """Manages telemetry data for multiple laps and multiple cars."""
     def __init__(self, max_laps=5):
         self.max_laps = max_laps
         self.laps = deque(maxlen=max_laps)
-        
         self.player_idx = 0
-        self.current_lap_data = self._new_lap_dict()
-        self.best_lap_data = None
-        self.best_lap_time = float('inf')
+        self.pb_car_idx = 255
+        self.rival_car_idx = 255
         self.current_lap_num = -1
-        
-        self.all_cars_data = {i: self._new_lap_dict() for i in range(22)}
-        self.all_cars_lap_nums = [-1] * 22
-        self.all_cars_team_ids = [41] * 22
-        
         self.session_type = 0
         self.track_name = "F1 25 Session"
         self.first_data_received = False
+        self.all_cars_data = {i: self._new_lap_dict() for i in range(22)}
+        self.all_cars_team_ids = [41] * 22
         
-        # Recording state
+        self.car_latches = {i: {
+            "speed_mph": 0.0, "rpm": 0, "throttle": 0.0, "brake": 0.0,
+            "ers": 0.0, "tyre": 0.0, 
+            "last_dist": -1.0, "last_lap": -1,
+            "world_x": None, "world_y": None, "world_z": None,
+            "last_motion_time": 0.0,
+            "last_lap_distance": 0.0,
+            "last_lap_data_time": 0.0,
+            "dist_since_last_lap": 0.0,
+            "last_frame_id": -1
+        } for i in range(22)}
+
+        self.current_lap_data = self.all_cars_data[0]
+        self.best_lap_data = None
+        self.best_lap_time = float('inf')
         self.is_recording = False
         self.recording_log = []
         self.recording_filename = ""
-        
         self.lock = threading.Lock()
 
     def _new_lap_dict(self):
-        return {
-            "distance": [], "speed": [], "rpm": [], "throttle": [], 
-            "brake": [], "time": [], "tyre_wear": [], "ers_store": []
-        }
+        return {"distance": [], "speed": [], "rpm": [], "throttle": [], "brake": [], "time": [], "tyre_wear": [], "ers_store": []}
 
     def toggle_recording(self):
         with self.lock:
             if not self.is_recording:
-                # Start recording
                 self.is_recording = True
-                # AI-friendly metadata header
-                self.recording_log = [{
-                    "metadata": {
-                        "description": "F1 25 Telemetry Data for AI Coaching",
-                        "game": "F1 25",
-                        "track": self.track_name,
-                        "session_type": self.session_type,
-                        "timestamp": datetime.now().isoformat(),
-                        "units": {
-                            "distance": "meters",
-                            "speed": "km/h",
-                            "throttle": "percentage (0-100)",
-                            "brake": "percentage (0-100)",
-                            "time": "seconds from start of lap"
-                        },
-                        "schema": {
-                            "car_idx": "0-21 (0 is usually player in single player)",
-                            "lap": "Current lap number",
-                            "distance": "Distance around the track",
-                            "speed": "Current vehicle speed",
-                            "rpm": "Engine RPM",
-                            "throttle": "Accelerator input",
-                            "brake": "Brake input",
-                            "time": "Time into the current lap"
-                        }
-                    }
-                }]
+                self.recording_log = [{"metadata": {"game": "F1 25", "track": self.track_name, "timestamp": datetime.now().isoformat(), "units": {"speed": "mph"}}}]
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                clean_track = self.track_name.replace(" ", "_")
-                self.recording_filename = f"F125_{clean_track}_{timestamp}.json"
+                self.recording_filename = f"F125_{self.track_name.replace(' ', '_')}_{timestamp}.json"
                 print(f"REC: Started recording to {self.recording_filename}")
             else:
-                # Stop and save
                 self.is_recording = False
                 if self.recording_log:
-                    # Create directory if missing
                     if not os.path.exists("recordings"): os.makedirs("recordings")
                     filepath = os.path.join("recordings", self.recording_filename)
-                    with open(filepath, 'w') as f:
-                        json.dump(self.recording_log, f)
-                    print(f"REC: Saved {len(self.recording_log)} samples to {filepath}")
+                    with open(filepath, 'w') as f: json.dump(self.recording_log, f)
+                    print(f"REC: Saved to {filepath}")
                 self.recording_log = []
 
     def update_session(self, track_id, session_type, player_idx):
@@ -122,13 +86,18 @@ class TelemetryData:
             if new_track != self.track_name or session_type != self.session_type:
                 self.track_name = new_track
                 self.session_type = session_type
-                # ... reset logic ...
                 self.laps.clear()
                 self.best_lap_data = None
                 self.best_lap_time = float('inf')
-                self.current_lap_data = self._new_lap_dict()
                 self.all_cars_data = {i: self._new_lap_dict() for i in range(22)}
-                self.all_cars_lap_nums = [-1] * 22
+                self.current_lap_data = self.all_cars_data[player_idx]
+
+    def update_tt_indices(self, pb_idx, rival_idx):
+        with self.lock:
+            if pb_idx != self.pb_car_idx or rival_idx != self.rival_car_idx:
+                print(f"TT: PlayerIdx={self.player_idx}, PBIdx={pb_idx}, RivalIdx={rival_idx}")
+            self.pb_car_idx = pb_idx
+            self.rival_car_idx = rival_idx
 
     def update_participants(self, participants):
         with self.lock:
@@ -137,65 +106,87 @@ class TelemetryData:
 
     def update_status(self, car_idx, ers_store, ers_deployed):
         with self.lock:
-            car_data = self.all_cars_data.get(car_idx)
-            if car_data and len(car_data["distance"]) > len(car_data["ers_store"]):
-                ers_pct = (ers_store / 4000000.0) * 100.0
-                car_data["ers_store"].append(ers_pct)
+            if car_idx < 22: self.car_latches[car_idx]["ers"] = (ers_store / 4000000.0) * 100.0
 
     def update_damage(self, car_idx, tyres_wear):
         with self.lock:
-            car_data = self.all_cars_data.get(car_idx)
-            if car_data and len(car_data["distance"]) > len(car_data["tyre_wear"]):
-                max_wear = max(tyres_wear)
-                car_data["tyre_wear"].append(max_wear)
+            if car_idx < 22: self.car_latches[car_idx]["tyre"] = max(tyres_wear)
 
-    def update_lap(self, car_idx, lap_num, distance, time_ms):
-        if car_idx == self.player_idx and not self.first_data_received:
-            self.first_data_received = True
-            
+    def update_motion(self, car_idx, x, y, z, vx, vy, vz, session_time, frame_id):
         with self.lock:
-            car_data = self.all_cars_data.get(car_idx)
-            if not car_data: return
-
-            last_lap = self.all_cars_lap_nums[car_idx]
-            if last_lap != -1 and lap_num > last_lap:
-                if car_idx == self.player_idx:
-                    lap_time = car_data["time"][-1] if car_data["time"] else float('inf')
-                    if len(car_data["distance"]) > 100:
-                        if lap_time < self.best_lap_time:
-                            self.best_lap_time = lap_time
-                            self.best_lap_data = car_data.copy()
-                        self.laps.append(car_data.copy())
-                    self.current_lap_data = self._new_lap_dict()
-                self.all_cars_data[car_idx] = self._new_lap_dict()
-                car_data = self.all_cars_data[car_idx]
-
-            self.all_cars_lap_nums[car_idx] = lap_num
-            car_data["distance"].append(distance)
-            car_data["time"].append(time_ms / 1000.0)
-            if car_idx == self.player_idx:
-                self.current_lap_num = lap_num
-                self.current_lap_data = car_data
-
-    def update_telemetry(self, car_idx, speed, rpm, throttle, brake):
-        with self.lock:
-            car_data = self.all_cars_data.get(car_idx)
-            if car_data and len(car_data["distance"]) > len(car_data["speed"]):
-                car_data["speed"].append(speed)
-                car_data["rpm"].append(rpm)
-                car_data["throttle"].append(throttle * 100.0)
-                car_data["brake"].append(brake * 100.0)
+            if car_idx < 22:
+                latch = self.car_latches[car_idx]
                 
-                # Record sample for ANY car if we are recording
-                if self.is_recording:
-                    sample = {
-                        "car_idx": car_idx, # Identify which car this is
-                        "lap": self.all_cars_lap_nums[car_idx],
-                        "distance": car_data["distance"][-1],
-                        "speed": speed,
-                        "rpm": rpm,
-                        "throttle": throttle * 100.0,
-                        "brake": brake * 100.0,
-                        "time": car_data["time"][-1]
-                    }
-                    self.recording_log.append(sample)
+                # 1. Calculate speed from world position delta (most reliable for ghosts)
+                speed_mph = latch["speed_mph"]
+                if latch["world_x"] is not None and session_time > latch["last_motion_time"]:
+                    dt = session_time - latch["last_motion_time"]
+                    dx = x - latch["world_x"]; dy = y - latch["world_y"]; dz = z - latch["world_z"]
+                    ds = (dx**2 + dy**2 + dz**2)**0.5
+                    speed_ms = ds / dt
+                    speed_mph = speed_ms * 2.23694
+                    latch["dist_since_last_lap"] += ds
+                
+                latch["world_x"] = x; latch["world_y"] = y; latch["world_z"] = z
+                latch["last_motion_time"] = session_time
+                latch["speed_mph"] = speed_mph
+
+                # 2. Record high-resolution data point
+                if frame_id != latch["last_frame_id"] and latch["last_lap_data_time"] > 0:
+                    data = self.all_cars_data[car_idx]
+                    # Use spline-aligned interpolated distance
+                    current_dist = latch["last_lap_distance"] + latch["dist_since_last_lap"]
+                    
+                    # Only record if distance is valid and moving forward
+                    if current_dist >= 0 and (not data["distance"] or current_dist > data["distance"][-1]):
+                        data["distance"].append(current_dist)
+                        data["speed"].append(speed_mph)
+                        data["time"].append(session_time)
+                        data["rpm"].append(latch["rpm"])
+                        data["throttle"].append(latch["throttle"])
+                        data["brake"].append(latch["brake"])
+                        data["tyre_wear"].append(latch["tyre"])
+                        data["ers_store"].append(latch["ers"])
+                    
+                    latch["last_frame_id"] = frame_id
+
+    def update_lap(self, car_idx, lap_num, distance, time_ms, session_time, frame_id):
+        if car_idx == self.player_idx: self.first_data_received = True
+        with self.lock:
+            if car_idx >= 22: return
+            latch = self.car_latches[car_idx]
+            
+            # Detect new lap
+            if distance < latch["last_dist"] - 100 or (latch["last_lap"] != -1 and lap_num < latch["last_lap"]):
+                self.all_cars_data[car_idx] = self._new_lap_dict()
+                if car_idx == self.player_idx: self.current_lap_data = self.all_cars_data[car_idx]
+                latch["dist_since_last_lap"] = 0
+
+            # Store lap for history if it was a complete lap (for player only)
+            if car_idx == self.player_idx and latch["last_lap"] != -1 and lap_num > latch["last_lap"]:
+                old_data = self.all_cars_data[car_idx]
+                lap_time = old_data["time"][-1] - old_data["time"][0] if len(old_data["time"]) > 1 else float('inf')
+                if len(old_data["distance"]) > 100:
+                    if lap_time < self.best_lap_time:
+                        self.best_lap_time = lap_time
+                        self.best_lap_data = {k: list(v) for k, v in old_data.items()}
+                    self.laps.append({k: list(v) for k, v in old_data.items()})
+                self.all_cars_data[car_idx] = self._new_lap_dict()
+                self.current_lap_data = self.all_cars_data[car_idx]
+                latch["dist_since_last_lap"] = 0
+
+            latch["last_dist"] = distance
+            latch["last_lap"] = lap_num
+            latch["last_lap_distance"] = distance
+            latch["last_lap_data_time"] = session_time
+            latch["dist_since_last_lap"] = 0 # Reset accumulation at each LapData sync
+            
+            if car_idx == self.player_idx: self.current_lap_num = lap_num
+
+    def update_telemetry(self, car_idx, speed_kph, rpm, throttle, brake, session_time, frame_id):
+        with self.lock:
+            if car_idx >= 22: return
+            latch = self.car_latches[car_idx]
+            latch["rpm"] = int(rpm)
+            latch["throttle"] = float(throttle * 100.0)
+            latch["brake"] = float(brake * 100.0)

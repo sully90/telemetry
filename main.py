@@ -25,8 +25,10 @@ def main():
     listener.participants_received.connect(telemetry_data.update_participants)
     listener.damage_received.connect(telemetry_data.update_damage)
     listener.status_received.connect(telemetry_data.update_status)
+    listener.motion_received.connect(telemetry_data.update_motion)
     listener.lap_received.connect(telemetry_data.update_lap)
     listener.telemetry_received.connect(telemetry_data.update_telemetry)
+    listener.tt_indices_received.connect(telemetry_data.update_tt_indices)
     listener.start()
     
     window = PlotterWindow(telemetry_data)

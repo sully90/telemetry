@@ -1,6 +1,6 @@
 # F1 25 Real-Time Telemetry Plotter
 
-A Python-based real-time telemetry plotter for F1 25. It displays speed, pedal inputs, time delta vs your best lap, tyre wear, and ERS energy, maintaining a history of previous laps with a fading effect.
+A Python-based real-time telemetry plotter for F1 25. It displays speed (mph), pedal inputs, time delta vs your best lap, tyre wear, and ERS energy, maintaining a history of previous laps with a fading effect.
 
 ![Example Screenshot](example.png)
 
