@@ -157,6 +157,20 @@ class TelemetryData:
                         data["pos_x"].append(x)
                         data["pos_z"].append(z)
                     
+                    if self.is_recording:
+                        self.recording_log.append({
+                            "car_idx": car_idx,
+                            "lap": latch["last_lap"],
+                            "distance": current_dist,
+                            "speed": speed_mph,
+                            "rpm": latch["rpm"],
+                            "throttle": latch["throttle"],
+                            "brake": latch["brake"],
+                            "time": session_time,
+                            "pos_x": x,
+                            "pos_z": z
+                        })
+                    
                     latch["last_frame_id"] = frame_id
 
     def update_lap(self, car_idx, lap_num, distance, time_ms, session_time, frame_id):
