@@ -6,6 +6,7 @@ from data_manager import TEAM_COLORS, SESSION_RACE, SESSION_TIME_TRIAL
 class TrackMapWindow(QtWidgets.QMainWindow):
     request_toggle_tyre_wear = QtCore.pyqtSignal()
     request_toggle_ers = QtCore.pyqtSignal()
+    request_reset_telemetry = QtCore.pyqtSignal()
     marker_clicked = QtCore.pyqtSignal(float)
 
     def __init__(self, telemetry_data):
@@ -23,6 +24,11 @@ class TrackMapWindow(QtWidgets.QMainWindow):
         self.p_map = self.win.addPlot(title="Track Map (X vs Z)")
         self.p_map.setAspectLocked(True)
         self.p_map.showGrid(x=True, y=True)
+        
+        # Discovery-based Tracking
+        self.auto_track = True
+        self.map_bounds = [float('inf'), float('-inf'), float('inf'), float('-inf')] # min_x, max_x, min_z, max_z
+        self.p_map.vb.sigRangeChangedManually.connect(self._on_manual_interaction)
 
         # History curves for all cars
         self.history_curves = {i: [] for i in range(22)}
@@ -47,11 +53,17 @@ class TrackMapWindow(QtWidgets.QMainWindow):
         self.timer.timeout.connect(self.update_plots)
         self.timer.start(50)
 
+    def _on_manual_interaction(self):
+        self.auto_track = False
+
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Q:
             QtWidgets.QApplication.instance().quit()
         elif event.key() == QtCore.Qt.Key_Space:
             with self.telemetry_data.lock: self.telemetry_data.marker_dist = None
+            self.auto_track = True
+            self._fit_to_bounds() # Snap back to whole track
+            self.request_reset_telemetry.emit()
         elif event.key() == QtCore.Qt.Key_R:
             self.telemetry_data.toggle_recording()
         elif event.key() == QtCore.Qt.Key_E:
@@ -80,8 +92,13 @@ class TrackMapWindow(QtWidgets.QMainWindow):
                 print(f"Error handling map click: {e}")
         super().mousePressEvent(event)
 
+    def _fit_to_bounds(self):
+        if self.map_bounds[0] != float('inf'):
+            x_min, x_max, z_min, z_max = self.map_bounds
+            self.p_map.setRange(xRange=(x_min, x_max), yRange=(z_min, z_max), padding=0.1)
+
     def focus_on_distance_range(self, dist_min, dist_max):
-        # Find world coordinates for this distance range to sync zoom
+        # Sync zoom from telemetry
         try:
             with self.telemetry_data.lock:
                 data = self.telemetry_data.current_lap_data
@@ -92,6 +109,7 @@ class TrackMapWindow(QtWidgets.QMainWindow):
                         x_pts = np.array(data["pos_x"])[mask]
                         z_pts = np.array(data["pos_z"])[mask]
                         if len(x_pts) > 0:
+                            self.auto_track = False 
                             self.p_map.setRange(xRange=(np.min(x_pts), np.max(x_pts)), yRange=(np.min(z_pts), np.max(z_pts)), padding=0.1)
         except Exception as e:
             print(f"Error syncing zoom: {e}")
@@ -104,12 +122,22 @@ class TrackMapWindow(QtWidgets.QMainWindow):
             
             # Update dots (current positions)
             spots = []
+            player_pos = None
             for i in range(22):
                 latch = self.telemetry_data.car_latches[i]
                 if latch["world_x"] is not None:
+                    # Discover track bounds based on car movement (ignore 0,0 teleport spikes)
+                    if abs(latch["world_x"]) > 1.0 or abs(latch["world_z"]) > 1.0:
+                        self.map_bounds[0] = min(self.map_bounds[0], latch["world_x"])
+                        self.map_bounds[1] = max(self.map_bounds[1], latch["world_x"])
+                        self.map_bounds[2] = min(self.map_bounds[2], latch["world_z"])
+                        self.map_bounds[3] = max(self.map_bounds[3], latch["world_z"])
+
                     team_id = self.telemetry_data.all_cars_team_ids[i]
                     color = TEAM_COLORS.get(team_id, (200, 200, 200))
-                    if i == player_idx: color = (255, 255, 255); size = 12; symbol = 't'
+                    if i == player_idx: 
+                        color = (255, 255, 255); size = 12; symbol = 't'
+                        player_pos = (latch["world_x"], latch["world_z"])
                     elif i == rival_idx and is_tt: color = (200, 0, 255); size = 12; symbol = 'o'
                     else: size = 10; symbol = 'o'
                     
@@ -183,13 +211,72 @@ class TrackMapWindow(QtWidgets.QMainWindow):
             # Update shared marker
             marker_dist = self.telemetry_data.marker_dist
             if marker_dist is not None:
+                self.auto_track = False
                 if player_data["distance"]:
                     mx = np.interp(marker_dist, player_data["distance"], player_data["pos_x"])
                     mz = np.interp(marker_dist, player_data["distance"], player_data["pos_z"])
                     self.marker_point.setData([{'pos': (mx, mz)}])
                     self.marker_point.show()
                 else: self.marker_point.hide()
-            else: self.marker_point.hide()
+            else:
+                self.marker_point.hide()
+                # Fit view to discovered track if auto-tracking is enabled
+                if self.auto_track:
+                    self._fit_to_bounds()
+
+class SteeringWheelWindow(QtWidgets.QMainWindow):
+    def __init__(self, telemetry_data):
+        super().__init__()
+        self.telemetry_data = telemetry_data
+        self.setWindowTitle("F1 25 Steering")
+        self.resize(300, 300)
+        self.setStyleSheet("background-color: black;")
+
+        central_widget = QtWidgets.QWidget()
+        self.setCentralWidget(central_widget)
+        layout = QtWidgets.QVBoxLayout(central_widget)
+        self.win = pg.GraphicsLayoutWidget(show=True)
+        layout.addWidget(self.win)
+
+        self.vb = self.win.addViewBox(lockAspect=True, enableMenu=False, enableMouse=False)
+        self.vb.setRange(xRange=(-50, 50), yRange=(-50, 50))
+
+        # Create F1 Steering Wheel Path
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(-25, -15, 50, 30, 5, 5) # Central body
+        path.addRoundedRect(-30, -20, 15, 40, 5, 5) # Left grip
+        path.addRect(15, -20, 15, 40)  # Right grip (fixed: rect for F1 grips)
+        # Fix path to be symmetric and butterfly like
+        path = QtGui.QPainterPath()
+        path.addRoundedRect(-20, -10, 40, 20, 5, 5) # Hub
+        path.addRoundedRect(-30, -20, 15, 40, 8, 8) # Left
+        path.addRoundedRect(15, -20, 15, 40, 8, 8)  # Right
+        
+        self.wheel_item = QtWidgets.QGraphicsPathItem(path)
+        self.wheel_item.setPen(pg.mkPen('w', width=3))
+        self.wheel_item.setBrush(pg.mkBrush(40, 40, 40))
+        self.wheel_item.setTransformOriginPoint(0, 0)
+        self.vb.addItem(self.wheel_item)
+        
+        # Red "Top" marker
+        top_marker = pg.ArrowItem(angle=-90, tipAngle=60, headLen=15, brush=pg.mkBrush('r'))
+        top_marker.setPos(0, -15)
+        top_marker.setParentItem(self.wheel_item)
+
+        self.timer = QtCore.QTimer()
+        self.timer.timeout.connect(self.update_plots)
+        self.timer.start(30) # High refresh for smooth rotation
+
+    def update_plots(self):
+        with self.telemetry_data.lock:
+            p_idx = self.telemetry_data.player_idx
+            steer = self.telemetry_data.car_latches[p_idx].get("steer", 0.0)
+            self.wheel_item.setRotation(-steer * 90.0)
+
+    def keyPressEvent(self, event):
+        if event.key() == QtCore.Qt.Key_Q:
+            QtWidgets.QApplication.instance().quit()
+        super().keyPressEvent(event)
 
 class PlotterWindow(QtWidgets.QMainWindow):
     marker_clicked = QtCore.pyqtSignal(float)
@@ -288,11 +375,16 @@ class PlotterWindow(QtWidgets.QMainWindow):
         if self.show_ers: self.p_ers.show()
         else: self.p_ers.hide()
 
+    def reset_zoom(self):
+        self.p_speed.enableAutoRange(axis='xy')
+        self.p_speed.setAutoVisible(x=True, y=True)
+
     def keyPressEvent(self, event):
         if event.key() == QtCore.Qt.Key_Q:
             QtWidgets.QApplication.instance().quit()
         elif event.key() == QtCore.Qt.Key_Space:
             with self.telemetry_data.lock: self.telemetry_data.marker_dist = None
+            self.reset_zoom()
         elif event.key() == QtCore.Qt.Key_T:
             self.toggle_tyre_wear()
         elif event.key() == QtCore.Qt.Key_E:

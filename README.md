@@ -6,7 +6,7 @@ A Python-based real-time telemetry plotter for F1 25. It provides high-frequency
 
 ## Features
 - **High-Resolution Telemetry**: Uses **World Position (X, Y, Z)** interpolation to provide smooth 60Hz telemetry data, even for Time Trial ghosts which the game usually restricted to ~1Hz.
-- **Track Map Visualization**: A dedicated window showing the 2D path of all 22 cars, highlighted by team colors.
+- **Track Map Visualization**: A dedicated window showing the 2D path of all 22 cars, highlighted by team colors. Includes a **real-time steering wheel icon** that rotates based on your inputs.
 - **Dual Window Layout**: Optimized for dual monitors; automatically detects and positions windows side-by-side on your second screen.
 - **Cross-Window Sync**:
   - **Shared Marker**: Middle-click on any telemetry trace or the track map to place a synchronized yellow marker across all views.

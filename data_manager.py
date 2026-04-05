@@ -40,7 +40,7 @@ class TelemetryData:
         self.all_cars_team_ids = [41] * 22
         
         self.car_latches = {i: {
-            "speed_mph": 0.0, "rpm": 0, "throttle": 0.0, "brake": 0.0,
+            "speed_mph": 0.0, "rpm": 0, "throttle": 0.0, "brake": 0.0, "steer": 0.0,
             "ers": 0.0, "tyre": 0.0, 
             "last_dist": -1.0, "last_lap": -1,
             "world_x": None, "world_y": None, "world_z": None,
@@ -63,7 +63,7 @@ class TelemetryData:
     def _new_lap_dict(self):
         return {
             "distance": [], "speed": [], "rpm": [], "throttle": [], 
-            "brake": [], "time": [], "tyre_wear": [], "ers_store": [],
+            "brake": [], "steer": [], "time": [], "tyre_wear": [], "ers_store": [],
             "pos_x": [], "pos_z": []
         }
 
@@ -71,7 +71,7 @@ class TelemetryData:
         with self.lock:
             if not self.is_recording:
                 self.is_recording = True
-                self.recording_log = [{"metadata": {"game": "F1 25", "track": self.track_name, "timestamp": datetime.now().isoformat(), "units": {"speed": "mph"}}}]
+                self.recording_log = [{"metadata": {"game": "F1 25", "track": self.track_name, "timestamp": datetime.now().isoformat(), "units": {"speed": "mph", "steer": "-1.0 to 1.0"}}}]
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 self.recording_filename = f"F125_{self.track_name.replace(' ', '_')}_{timestamp}.json"
                 print(f"REC: Started recording to {self.recording_filename}")
@@ -122,6 +122,9 @@ class TelemetryData:
             if car_idx < 22: self.car_latches[car_idx]["tyre"] = max(tyres_wear)
 
     def update_motion(self, car_idx, x, y, z, vx, vy, vz, session_time, frame_id):
+        # Flip Z coordinate to fix mirrored track map (right turns appearing as left)
+        z = -z
+        
         with self.lock:
             if car_idx < 22:
                 latch = self.car_latches[car_idx]
@@ -132,9 +135,14 @@ class TelemetryData:
                     dt = session_time - latch["last_motion_time"]
                     dx = x - latch["world_x"]; dy = y - latch["world_y"]; dz = z - latch["world_z"]
                     ds = (dx**2 + dy**2 + dz**2)**0.5
-                    speed_ms = ds / dt
-                    speed_mph = speed_ms * 2.23694
-                    latch["dist_since_last_lap"] += ds
+                    
+                    # Sanity check: Ignore jumps larger than 50m (teleports/lap resets)
+                    if ds < 50.0:
+                        speed_ms = ds / dt
+                        speed_mph = speed_ms * 2.23694
+                        # Cap at 300mph to avoid noise spikes
+                        speed_mph = min(300.0, speed_mph)
+                        latch["dist_since_last_lap"] += ds
                 
                 latch["world_x"] = x; latch["world_y"] = y; latch["world_z"] = z
                 latch["last_motion_time"] = session_time
@@ -152,6 +160,7 @@ class TelemetryData:
                         data["rpm"].append(latch["rpm"])
                         data["throttle"].append(latch["throttle"])
                         data["brake"].append(latch["brake"])
+                        data["steer"].append(latch["steer"])
                         data["tyre_wear"].append(latch["tyre"])
                         data["ers_store"].append(latch["ers"])
                         data["pos_x"].append(x)
@@ -166,6 +175,7 @@ class TelemetryData:
                             "rpm": latch["rpm"],
                             "throttle": latch["throttle"],
                             "brake": latch["brake"],
+                            "steer": latch["steer"],
                             "time": session_time,
                             "pos_x": x,
                             "pos_z": z
@@ -212,10 +222,11 @@ class TelemetryData:
             
             if car_idx == self.player_idx: self.current_lap_num = lap_num
 
-    def update_telemetry(self, car_idx, speed_kph, rpm, throttle, brake, session_time, frame_id):
+    def update_telemetry(self, car_idx, speed_kph, rpm, throttle, brake, steer, session_time, frame_id):
         with self.lock:
             if car_idx >= 22: return
             latch = self.car_latches[car_idx]
             latch["rpm"] = int(rpm)
             latch["throttle"] = float(throttle * 100.0)
             latch["brake"] = float(brake * 100.0)
+            latch["steer"] = float(steer)

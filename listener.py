@@ -23,7 +23,7 @@ class TelemetryListener(QtCore.QObject):
     damage_received = QtCore.pyqtSignal(int, list) 
     status_received = QtCore.pyqtSignal(int, float, float) 
     lap_received = QtCore.pyqtSignal(int, int, float, int, float, int) # car_idx, lap, dist, time_ms, session_time, frame_id
-    telemetry_received = QtCore.pyqtSignal(int, float, int, float, float, float, int) # car_idx, speed, rpm, throttle, brake, session_time, frame_id
+    telemetry_received = QtCore.pyqtSignal(int, float, int, float, float, float, float, int) # car_idx, speed, rpm, throttle, brake, steer, session_time, frame_id
     motion_received = QtCore.pyqtSignal(int, float, float, float, float, float, float, float, int) # idx, x, y, z, vx, vy, vz, session_time, frame_id
     tt_indices_received = QtCore.pyqtSignal(int, int) 
     
@@ -117,12 +117,13 @@ class TelemetryListener(QtCore.QObject):
                     for i in range(22):
                         offset = HEADER_SIZE + (i * entry_size)
                         if len(data) >= offset + 60:
-                            # F1 25 Telemetry: speed=0, throttle=2, brake=10, rpm=16
+                            # F1 25 Telemetry: speed=0, throttle=2, steer=6, brake=10, rpm=16
                             speed = struct.unpack("<H", data[offset:offset+2])[0]
                             throttle = struct.unpack("<f", data[offset+2:offset+6])[0]
+                            steer = struct.unpack("<f", data[offset+6:offset+10])[0]
                             brake = struct.unpack("<f", data[offset+10:offset+14])[0]
                             rpm = struct.unpack("<H", data[offset+16:offset+18])[0]
-                            self.telemetry_received.emit(i, float(speed), int(rpm), throttle, brake, session_time, frame_id)
+                            self.telemetry_received.emit(i, float(speed), int(rpm), throttle, brake, steer, session_time, frame_id)
 
             except socket.timeout:
                 continue

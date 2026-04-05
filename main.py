@@ -4,7 +4,7 @@ from PyQt5 import QtWidgets
 
 from data_manager import TelemetryData
 from listener import TelemetryListener
-from plotter import PlotterWindow, TrackMapWindow
+from plotter import PlotterWindow, TrackMapWindow, SteeringWheelWindow
 
 # Configuration
 DEFAULT_UDP_PORT = 20778
@@ -45,6 +45,11 @@ def main():
     map_window = TrackMapWindow(telemetry_data)
     map_window.setGeometry(geom.x() + width, geom.y(), width, height)
     
+    # Steering Window (dedicated overlay window)
+    steer_window = SteeringWheelWindow(telemetry_data)
+    steer_window.setGeometry(geom.x() + geom.width() - 320, geom.y() + geom.height() - 320, 300, 300)
+    steer_window.show()
+    
     # Connect signals for global key handling
     map_window.request_toggle_tyre_wear.connect(window.toggle_tyre_wear)
     map_window.request_toggle_ers.connect(window.toggle_ers)
@@ -55,6 +60,7 @@ def main():
     
     # Sync zoom from Telemetry to Map
     window.view_range_changed.connect(map_window.focus_on_distance_range)
+    map_window.request_reset_telemetry.connect(window.reset_zoom)
     
     map_window.show()
     
