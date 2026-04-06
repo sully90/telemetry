@@ -1,8 +1,6 @@
 import threading
-import json
-import os
-from datetime import datetime
 from collections import deque
+from .recorder import TelemetryRecorder
 
 TRACK_MAP = {
     0: "Melbourne", 1: "Paul Ricard", 2: "Shanghai", 3: "Sakhir",
@@ -54,9 +52,7 @@ class TelemetryData:
         self.current_lap_data = self.all_cars_data[0]
         self.best_lap_data = None
         self.best_lap_time = float('inf')
-        self.is_recording = False
-        self.recording_log = []
-        self.recording_filename = ""
+        self.recorder = TelemetryRecorder()
         self.marker_dist = None
         self.lock = threading.RLock()
 
@@ -69,20 +65,15 @@ class TelemetryData:
 
     def toggle_recording(self):
         with self.lock:
-            if not self.is_recording:
-                self.is_recording = True
-                self.recording_log = [{"metadata": {"game": "F1 25", "track": self.track_name, "timestamp": datetime.now().isoformat(), "units": {"speed": "mph", "steer": "-1.0 to 1.0"}}}]
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                self.recording_filename = f"F125_{self.track_name.replace(' ', '_')}_{timestamp}.json"
-                print(f"REC: Started recording to {self.recording_filename}")
+            if not self.recorder.is_recording:
+                units = {"speed": "mph", "steer": "-1.0 to 1.0"}
+                self.recorder.start_recording(self.track_name, units)
             else:
-                self.is_recording = False
-                if self.recording_log:
-                    if not os.path.exists("recordings"): os.makedirs("recordings")
-                    filepath = os.path.join("recordings", self.recording_filename)
-                    with open(filepath, 'w') as f: json.dump(self.recording_log, f)
-                    print(f"REC: Saved to {filepath}")
-                self.recording_log = []
+                self.recorder.stop_recording()
+
+    @property
+    def is_recording(self):
+        return self.recorder.is_recording
 
     def update_session(self, track_id, session_type, player_idx):
         with self.lock:
@@ -166,20 +157,19 @@ class TelemetryData:
                         data["pos_x"].append(x)
                         data["pos_z"].append(z)
                     
-                    if self.is_recording:
-                        self.recording_log.append({
-                            "car_idx": car_idx,
-                            "lap": latch["last_lap"],
-                            "distance": current_dist,
-                            "speed": speed_mph,
-                            "rpm": latch["rpm"],
-                            "throttle": latch["throttle"],
-                            "brake": latch["brake"],
-                            "steer": latch["steer"],
-                            "time": session_time,
-                            "pos_x": x,
-                            "pos_z": z
-                        })
+                    self.recorder.add_sample({
+                        "car_idx": car_idx,
+                        "lap": latch["last_lap"],
+                        "distance": current_dist,
+                        "speed": speed_mph,
+                        "rpm": latch["rpm"],
+                        "throttle": latch["throttle"],
+                        "brake": latch["brake"],
+                        "steer": latch["steer"],
+                        "time": session_time,
+                        "pos_x": x,
+                        "pos_z": z
+                    })
                     
                     latch["last_frame_id"] = frame_id
 

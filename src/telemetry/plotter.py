@@ -3,6 +3,15 @@ from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
 from .data_manager import TEAM_COLORS, SESSION_RACE, SESSION_TIME_TRIAL
 
+class RecordingIndicator(QtWidgets.QLabel):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setFixedSize(20, 20)
+        self.setStyleSheet("background-color: red; border-radius: 10px;")
+        self.hide()
+        # Position in top right corner
+        self.move(10, 10)
+
 class TrackMapWindow(QtWidgets.QMainWindow):
     request_toggle_tyre_wear = QtCore.pyqtSignal()
     request_toggle_ers = QtCore.pyqtSignal()
@@ -21,12 +30,17 @@ class TrackMapWindow(QtWidgets.QMainWindow):
         self.win = pg.GraphicsLayoutWidget(show=True)
         layout.addWidget(self.win)
 
+        self.rec_indicator = RecordingIndicator(self)
+        self.rec_indicator.raise_()
+
         self.p_map = self.win.addPlot(title="Track Map (X vs Z)")
         self.p_map.setAspectLocked(True)
         self.p_map.showGrid(x=True, y=True)
         
         # Discovery-based Tracking
         self.auto_track = True
+        self.track_fitted = False
+        self.current_track_name = ""
         self.map_bounds = [float('inf'), float('-inf'), float('inf'), float('-inf')] # min_x, max_x, min_z, max_z
         self.p_map.vb.sigRangeChangedManually.connect(self._on_manual_interaction)
 
@@ -62,6 +76,7 @@ class TrackMapWindow(QtWidgets.QMainWindow):
         elif event.key() == QtCore.Qt.Key_Space:
             with self.telemetry_data.lock: self.telemetry_data.marker_dist = None
             self.auto_track = True
+            self.track_fitted = False
             self._fit_to_bounds() # Snap back to whole track
             self.request_reset_telemetry.emit()
         elif event.key() == QtCore.Qt.Key_R:
@@ -119,8 +134,15 @@ class TrackMapWindow(QtWidgets.QMainWindow):
             player_idx = self.telemetry_data.player_idx
             rival_idx = self.telemetry_data.rival_car_idx
             is_tt = self.telemetry_data.session_type in SESSION_TIME_TRIAL
+            is_recording = self.telemetry_data.is_recording
+            track_name = self.telemetry_data.track_name
             
-            # Update dots (current positions)
+            # Reset discovery if track changes
+            if self.current_track_name != track_name:
+                self.map_bounds = [float('inf'), float('-inf'), float('inf'), float('-inf')]
+            self.current_track_name = track_name
+
+            self.rec_indicator.setVisible(is_recording)
             spots = []
             player_pos = None
             for i in range(22):
@@ -294,6 +316,9 @@ class PlotterWindow(QtWidgets.QMainWindow):
         self.win = pg.GraphicsLayoutWidget(show=True)
         layout.addWidget(self.win)
 
+        self.rec_indicator = RecordingIndicator(self)
+        self.rec_indicator.raise_()
+
         # Create subplots
         self.p_speed = self.win.addPlot(title="Speed (mph)")
         self.win.nextRow()
@@ -394,7 +419,9 @@ class PlotterWindow(QtWidgets.QMainWindow):
         super().keyPressEvent(event)
 
     def _handle_range_change(self, window, view_range):
-        self.view_range_changed.emit(view_range[0], view_range[1])
+        # Only sync if not auto-ranging (i.e. user has manually zoomed/panned)
+        if not self.p_speed.vb.state['autoRange'][0]:
+            self.view_range_changed.emit(view_range[0], view_range[1])
 
     def mousePressEvent(self, event):
         if event.button() == QtCore.Qt.MidButton:
@@ -420,6 +447,8 @@ class PlotterWindow(QtWidgets.QMainWindow):
             is_race = session_type in SESSION_RACE
             is_tt = session_type in SESSION_TIME_TRIAL
             is_recording = self.telemetry_data.is_recording
+            
+            self.rec_indicator.setVisible(is_recording)
             
             track_name = self.telemetry_data.track_name
             mode_str = "RACE MODE" if is_race else "TIME TRIAL" if is_tt else "PRACTICE"

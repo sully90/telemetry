@@ -6,6 +6,8 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "numpy>=2.4.4",
+    "pandas>=3.0.2",
+    "pyarrow>=23.0.1",
     "pyqt5>=5.15.11",
     "pyqt5-qt5==5.15.2",
     "pyqtgraph>=0.14.0",
@@ -14,6 +16,7 @@ dependencies = [
 
 [project.scripts]
 telemetry = "telemetry.__main__:main"
+telemetry-playback = "telemetry.playback:main"
 
 [build-system]
 requires = ["hatchling"]
