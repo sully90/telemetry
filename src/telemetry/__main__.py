@@ -2,9 +2,9 @@ import sys
 import argparse
 from PyQt5 import QtWidgets
 
-from data_manager import TelemetryData
-from listener import TelemetryListener
-from plotter import PlotterWindow, TrackMapWindow, SteeringWheelWindow
+from .data_manager import TelemetryData
+from .listener import TelemetryListener
+from .plotter import PlotterWindow, TrackMapWindow, SteeringWheelWindow
 
 # Configuration
 DEFAULT_UDP_PORT = 20778

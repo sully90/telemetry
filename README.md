@@ -35,19 +35,19 @@ All keys work globally across both windows:
 
 1. Navigate to the project directory:
    ```bash
-   cd telemetry_plotter
+   cd telemetry
    ```
 
-2. Install the required dependencies:
+2. Install the required dependencies using `uv`:
    ```bash
-   pip install -r requirements.txt
+   uv sync
    ```
 
 ## Usage
 
 Run the application:
 ```bash
-python main.py
+uv run telemetry
 ```
 
 ### Configuration Options

@@ -1,0 +1,20 @@
+[project]
+name = "telemetry"
+version = "0.1.0"
+description = "F1 25 Real-Time Telemetry Plotter"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "numpy>=2.4.4",
+    "pyqt5>=5.15.11",
+    "pyqt5-qt5==5.15.2",
+    "pyqtgraph>=0.14.0",
+    "websockets>=16.0",
+]
+
+[project.scripts]
+telemetry = "telemetry.__main__:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,7 +1,7 @@
 import numpy as np
 from PyQt5 import QtWidgets, QtCore, QtGui
 import pyqtgraph as pg
-from data_manager import TEAM_COLORS, SESSION_RACE, SESSION_TIME_TRIAL
+from .data_manager import TEAM_COLORS, SESSION_RACE, SESSION_TIME_TRIAL
 
 class TrackMapWindow(QtWidgets.QMainWindow):
     request_toggle_tyre_wear = QtCore.pyqtSignal()
