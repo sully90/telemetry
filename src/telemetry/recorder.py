@@ -13,14 +13,17 @@ class TelemetryRecorder:
         if not os.path.exists(self.output_dir):
             os.makedirs(self.output_dir)
 
-    def start_recording(self, track_name: str, units: Dict[str, str]):
+    def start_recording(self, track_name: str, units: Dict[str, str], session_type: int = 0, player_idx: int = 0, rival_car_idx: int = 255):
         self.is_recording = True
         self.recording_log = []
         self.metadata = {
             "game": "F1 25",
             "track": track_name,
             "timestamp": datetime.now().isoformat(),
-            "units": units
+            "units": units,
+            "session_type": session_type,
+            "player_idx": player_idx,
+            "rival_car_idx": rival_car_idx
         }
         print(f"REC: Started recording for track: {track_name}")
 

@@ -56,75 +56,78 @@ class PlaybackManager(QtCore.QObject):
     def __init__(self, telemetry_data, df, metadata):
         super().__init__()
         self.telemetry_data = telemetry_data
-        self.df = df
+        # Ensure data is sorted by time for consistent playback
+        self.df = df.sort_values('time').reset_index(drop=True)
         self.metadata = metadata
         self.current_idx = 0
         self.is_playing = False
+        self.current_laps = {} # car_idx -> lap_num
+        
+        # Pre-populate all lap data for quick switching
+        self.laps_data = {} # car_idx -> {lap_num: lap_data}
+        self._cache_all_laps()
         
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self._on_tick)
-        # We'll aim for ~60fps playback if possible, but the data frequency might vary
         self.timer.start(16) 
         
-        self._populate_full_session()
+        self._initial_setup()
 
-    def _populate_full_session(self):
-        """Pre-populate TelemetryData with all lap data for plotting."""
+    def _cache_all_laps(self):
+        """Cache all lap data from the recording."""
+        for car_idx, car_df in self.df.groupby('car_idx'):
+            car_idx = int(car_idx)
+            if car_idx >= 22: continue
+            self.laps_data[car_idx] = {}
+            for lap_num, lap_df in car_df.groupby('lap'):
+                self.laps_data[car_idx][int(lap_num)] = {
+                    "distance": lap_df['distance'].tolist(),
+                    "speed": lap_df['speed'].tolist(),
+                    "rpm": lap_df['rpm'].tolist(),
+                    "throttle": lap_df['throttle'].tolist(),
+                    "brake": lap_df['brake'].tolist(),
+                    "steer": lap_df['steer'].tolist(),
+                    "time": lap_df['time'].tolist(),
+                    "tyre_wear": [0]*len(lap_df), 
+                    "ers_store": [0]*len(lap_df),
+                    "pos_x": lap_df['pos_x'].tolist(),
+                    "pos_z": lap_df['pos_z'].tolist()
+                }
+
+    def _initial_setup(self):
+        """Set up initial state for plotting."""
         with self.telemetry_data.lock:
-            # Set track name
             self.telemetry_data.track_name = self.metadata.get("track", "Unknown")
+            self.telemetry_data.session_type = self.metadata.get("session_type", 0)
+            self.telemetry_data.player_idx = self.metadata.get("player_idx", 0)
+            self.telemetry_data.rival_car_idx = self.metadata.get("rival_car_idx", 255)
             
-            # Group by car_idx to avoid mixing data from different cars
-            for car_idx, car_df in self.df.groupby('car_idx'):
-                car_idx = int(car_idx)
-                if car_idx >= 22: continue
-                
-                laps = sorted(car_df['lap'].unique())
-                for i, lap_num in enumerate(laps):
-                    lap_df = car_df[car_df['lap'] == lap_num]
-                    
-                    # Last lap in the file for this car is considered the "current" active one
-                    if i == len(laps) - 1:
-                        target = self.telemetry_data.all_cars_data[car_idx]
-                    else:
-                        # Add to history
-                        hist_data = {
-                            "distance": lap_df['distance'].tolist(),
-                            "speed": lap_df['speed'].tolist(),
-                            "rpm": lap_df['rpm'].tolist(),
-                            "throttle": lap_df['throttle'].tolist(),
-                            "brake": lap_df['brake'].tolist(),
-                            "steer": lap_df['steer'].tolist(),
-                            "time": lap_df['time'].tolist(),
-                            "tyre_wear": [0]*len(lap_df), 
-                            "ers_store": [0]*len(lap_df),
-                            "pos_x": lap_df['pos_x'].tolist(),
-                            "pos_z": lap_df['pos_z'].tolist()
-                        }
-                        self.telemetry_data.car_histories[car_idx].append(hist_data)
-                        continue
+            # Find and set the best lap for the player
+            best_lap_time = float('inf')
+            best_lap_data = None
+            p_idx = self.telemetry_data.player_idx
+            if p_idx in self.laps_data:
+                for lap_data in self.laps_data[p_idx].values():
+                    if len(lap_data["time"]) > 1:
+                        lap_time = lap_data["time"][-1] - lap_data["time"][0]
+                        if lap_time < best_lap_time:
+                            best_lap_time = lap_time
+                            best_lap_data = lap_data
+            
+            if best_lap_data:
+                self.telemetry_data.best_lap_data = best_lap_data
+                self.telemetry_data.best_lap_time = best_lap_time
 
-                    # Populate the active lap data
-                    target["distance"] = lap_df['distance'].tolist()
-                    target["speed"] = lap_df['speed'].tolist()
-                    target["rpm"] = lap_df['rpm'].tolist()
-                    target["throttle"] = lap_df['throttle'].tolist()
-                    target["brake"] = lap_df['brake'].tolist()
-                    target["steer"] = lap_df['steer'].tolist()
-                    target["time"] = lap_df['time'].tolist()
-                    target["pos_x"] = lap_df['pos_x'].tolist()
-                    target["pos_z"] = lap_df['pos_z'].tolist()
-                    
-                    if car_idx == self.telemetry_data.player_idx:
-                        self.telemetry_data.current_lap_num = lap_num
+            # Trigger initial lap data load
+            self.update_telemetry_state()
 
     def _on_tick(self):
         if not self.is_playing:
             return
             
         if self.current_idx < len(self.df):
-            # Process all rows for the current timestamp (to update all cars at once)
             current_time = self.df.iloc[self.current_idx]['time']
+            # Process all updates for this point in time
             while self.current_idx < len(self.df) and self.df.iloc[self.current_idx]['time'] <= current_time:
                 self.update_telemetry_state()
                 self.current_idx += 1
@@ -138,10 +141,31 @@ class PlaybackManager(QtCore.QObject):
             
         row = self.df.iloc[self.current_idx]
         car_idx = int(row["car_idx"])
+        lap_num = int(row["lap"])
+        
         if car_idx >= 22:
             return
             
         with self.telemetry_data.lock:
+            # Handle lap transitions for this car
+            if car_idx not in self.current_laps or self.current_laps[car_idx] != lap_num:
+                # If we were previously on a different lap, move it to history
+                if car_idx in self.current_laps:
+                    old_lap_data = self.telemetry_data.all_cars_data[car_idx]
+                    if len(old_lap_data["distance"]) > 10:
+                        self.telemetry_data.car_histories[car_idx].append({k: list(v) for k, v in old_lap_data.items()})
+
+                # Load the new lap data into TelemetryData for plotting
+                if car_idx in self.laps_data and lap_num in self.laps_data[car_idx]:
+                    new_data = self.laps_data[car_idx][lap_num]
+                    target = self.telemetry_data.all_cars_data[car_idx]
+                    for k, v in new_data.items():
+                        target[k] = v
+                
+                self.current_laps[car_idx] = lap_num
+                if car_idx == self.telemetry_data.player_idx:
+                    self.telemetry_data.current_lap_num = lap_num
+
             latch = self.telemetry_data.car_latches[car_idx]
             latch["speed_mph"] = row["speed"]
             latch["rpm"] = row["rpm"]
@@ -150,9 +174,8 @@ class PlaybackManager(QtCore.QObject):
             latch["steer"] = row["steer"]
             latch["world_x"] = row["pos_x"]
             latch["world_z"] = row["pos_z"]
-            latch["last_lap"] = row["lap"]
+            latch["last_lap"] = lap_num
             
-            # Update the global marker if this is the player car
             if car_idx == self.telemetry_data.player_idx:
                 self.telemetry_data.marker_dist = row["distance"]
 

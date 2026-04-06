@@ -23,6 +23,7 @@ All keys work globally across both windows:
 - **`Right Click + Drag` / `Scroll`**: Zoom telemetry (Track Map follows).
 - **`T`**: Toggle **Tyre Wear** plot.
 - **`E`**: Toggle **Energy (ERS)** plot.
+- **`D`**: Toggle **Delta Line** on track map (Green=Faster, Red=Slower). The line thickness is **normalized** across the entire lap to highlight where the largest gains and losses are occurring.
 - **`R`**: Toggle **Recording** to file (saved in `recordings/` folder).
 - **`S`**: Take a composite **Screenshot** of all open windows.
 - **`Q`**: Quit the application.

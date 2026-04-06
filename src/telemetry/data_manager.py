@@ -67,7 +67,13 @@ class TelemetryData:
         with self.lock:
             if not self.recorder.is_recording:
                 units = {"speed": "mph", "steer": "-1.0 to 1.0"}
-                self.recorder.start_recording(self.track_name, units)
+                self.recorder.start_recording(
+                    self.track_name, 
+                    units, 
+                    session_type=self.session_type,
+                    player_idx=self.player_idx,
+                    rival_car_idx=self.rival_car_idx
+                )
             else:
                 self.recorder.stop_recording()
 
@@ -94,6 +100,9 @@ class TelemetryData:
                 print(f"TT: PlayerIdx={self.player_idx}, PBIdx={pb_idx}, RivalIdx={rival_idx}")
             self.pb_car_idx = pb_idx
             self.rival_car_idx = rival_idx
+            # Ensure the plotter knows who the current rival is for delta calculations
+            if rival_idx != 255:
+                self.current_lap_data = self.all_cars_data[self.player_idx]
 
     def set_marker(self, dist):
         with self.lock:

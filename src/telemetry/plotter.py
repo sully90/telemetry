@@ -76,6 +76,13 @@ class TrackMapWindow(QtWidgets.QMainWindow):
         self.map_bounds = [float('inf'), float('-inf'), float('inf'), float('-inf')] # min_x, max_x, min_z, max_z
         self.p_map.vb.sigRangeChangedManually.connect(self._on_manual_interaction)
 
+        # Delta line visualization
+        self.show_delta_line = False
+        self.delta_line_segments = []
+        self.last_delta_idx = 0
+        self.last_ref_lap_id = None
+        self.last_player_lap_num = -1
+
         # History curves for all cars
         self.history_curves = {i: [] for i in range(22)}
         
@@ -119,6 +126,16 @@ class TrackMapWindow(QtWidgets.QMainWindow):
             self.request_toggle_ers.emit()
         elif event.key() == QtCore.Qt.Key_T:
             self.request_toggle_tyre_wear.emit()
+        elif event.key() == QtCore.Qt.Key_D:
+            self.show_delta_line = not self.show_delta_line
+            if not self.show_delta_line:
+                for seg in self.delta_line_segments:
+                    self.p_map.removeItem(seg)
+                self.delta_line_segments = []
+                self.last_delta_idx = 0
+                self.curr_curve.show()
+            else:
+                self.curr_curve.hide()
         super().keyPressEvent(event)
 
     def mousePressEvent(self, event):
@@ -228,8 +245,11 @@ class TrackMapWindow(QtWidgets.QMainWindow):
             # Update Player Current Lap
             player_data = self.telemetry_data.all_cars_data[player_idx]
             if player_data["pos_x"]:
-                self.curr_curve.setData(player_data["pos_x"], player_data["pos_z"])
-                self.curr_curve.show()
+                if not self.show_delta_line:
+                    self.curr_curve.setData(player_data["pos_x"], player_data["pos_z"])
+                    self.curr_curve.show()
+                else:
+                    self.curr_curve.hide()
             else:
                 self.curr_curve.hide()
 
@@ -266,6 +286,83 @@ class TrackMapWindow(QtWidgets.QMainWindow):
 
             # Update shared marker
             marker_dist = self.telemetry_data.marker_dist
+            
+            # --- Delta Line Logic ---
+            if self.show_delta_line:
+                # Find rival data
+                ref_lap = None
+                if is_tt and rival_idx != 255: ref_lap = self.telemetry_data.all_cars_data[rival_idx]
+                else: ref_lap = self.telemetry_data.best_lap_data
+                
+                # Check if reference lap or current player lap changed
+                ref_lap_id = id(ref_lap) if ref_lap else None
+                curr_lap_num = self.telemetry_data.current_lap_num
+                
+                if ref_lap_id != self.last_ref_lap_id or curr_lap_num != self.last_player_lap_num:
+                    for seg in self.delta_line_segments: self.p_map.removeItem(seg)
+                    self.delta_line_segments = []
+                    self.last_delta_idx = 0
+                    self.last_ref_lap_id = ref_lap_id
+                    self.last_player_lap_num = curr_lap_num
+
+                if ref_lap and player_data["distance"] and len(player_data["distance"]) > 10 and len(ref_lap["distance"]) > 10:
+                    try:
+                        p_dist = np.array(player_data["distance"])
+                        p_time = np.array(player_data["time"])
+                        p_x = np.array(player_data["pos_x"])
+                        p_z = np.array(player_data["pos_z"])
+                        
+                        r_dist = np.array(ref_lap["distance"])
+                        r_time = np.array(ref_lap["time"])
+                        
+                        p_time_rel = p_time - p_time[0]
+                        r_time_rel = r_time - r_time[0]
+                        
+                        # Calculate all deltas for normalization over the entire available lap
+                        # This works perfectly for playback where the full lap is pre-loaded
+                        all_r_time_interp = np.interp(p_dist, r_dist, r_time_rel)
+                        all_deltas_abs = np.abs(p_time_rel - all_r_time_interp)
+                        max_abs = np.max(all_deltas_abs)
+                        min_abs = np.min(all_deltas_abs)
+                        abs_range = max_abs - min_abs
+                        if abs_range < 0.001: abs_range = 1.0
+
+                        # Find the index in player_data corresponding to current playback distance
+                        target_dist = self.telemetry_data.marker_dist if self.telemetry_data.marker_dist is not None else 0
+                        n_points = len(p_dist)
+                        max_idx = np.searchsorted(p_dist, target_dist)
+                        
+                        # Incremental draw
+                        step = 10 
+                        while self.last_delta_idx + step < max_idx and self.last_delta_idx + step < n_points:
+                            i = self.last_delta_idx
+                            
+                            # Sanity Check: If positions jump too far, skip this segment (lap start/end or glitch)
+                            dist_sq = (p_x[i+step] - p_x[i])**2 + (p_z[i+step] - p_z[i])**2
+                            if dist_sq > 100**2: 
+                                self.last_delta_idx += step
+                                continue
+
+                            # Interpolate rival's relative time at player's distances for this segment
+                            p_dist_seg = p_dist[i:i+step+1]
+                            r_time_interp = np.interp(p_dist_seg, r_dist, r_time_rel)
+                            deltas = p_time_rel[i:i+step+1] - r_time_interp
+                            
+                            avg_delta = np.mean(deltas)
+                            color = (0, 255, 0) if avg_delta < 0 else (255, 0, 0)
+                            
+                            # Normalized thickness: 2 to 10 based on lap min/max magnitude
+                            norm_val = (abs(avg_delta) - min_abs) / abs_range
+                            thickness = 2 + int(norm_val * 8)
+                            
+                            seg = self.p_map.plot(p_x[i:i+step+1], p_z[i:i+step+1], 
+                                                 pen=pg.mkPen(color, width=thickness))
+                            seg.setZValue(150) # Above other lines
+                            self.delta_line_segments.append(seg)
+                            self.last_delta_idx += step
+                    except Exception as e:
+                        print(f"Error calculating delta line: {e}")
+
             if marker_dist is not None:
                 self.auto_track = False
                 if player_data["distance"]:
